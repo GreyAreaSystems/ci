@@ -1,0 +1,84 @@
+name: node-check
+
+# Shared Node/TS gate: typecheck -> lint -> test -> build.
+#
+#   jobs:
+#     check:
+#       uses: GreyAreaSystems/ci/.github/workflows/node-check.yml@main
+#       with:
+#         node-version: "22"
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        type: string
+        default: ubuntu-latest
+      node-version:
+        type: string
+        default: "22"
+      working-directory:
+        description: "Subdirectory to run in, for repos where the app is not at the root."
+        type: string
+        default: "."
+      install:
+        description: "Install command. `npm ci` needs a lockfile in sync with package.json."
+        type: string
+        default: npm ci
+      typecheck:
+        type: string
+        default: npm run typecheck
+      lint:
+        type: string
+        default: npm run lint
+      test:
+        type: string
+        default: npm run test
+      build:
+        type: string
+        default: npm run build
+      skip:
+        description: >
+          Space-separated steps to skip for repos that lack them, e.g. "test build".
+          Preferred over passing a no-op command, so the log says what was skipped.
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ${{ inputs.os }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: install
+        run: ${{ inputs.install }}
+
+      - name: typecheck
+        if: ${{ !contains(inputs.skip, 'typecheck') }}
+        run: ${{ inputs.typecheck }}
+
+      - name: lint
+        if: ${{ !contains(inputs.skip, 'lint') }}
+        run: ${{ inputs.lint }}
+
+      - name: test
+        if: ${{ !contains(inputs.skip, 'test') }}
+        run: ${{ inputs.test }}
+
+      - name: build
+        if: ${{ !contains(inputs.skip, 'build') }}
+        run: ${{ inputs.build }}

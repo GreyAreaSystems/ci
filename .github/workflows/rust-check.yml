@@ -1,0 +1,104 @@
+name: rust-check
+
+# Shared Rust gate: fmt -> clippy -> test, with a dependency cache.
+#
+# Called, not copied. A fix here reaches every repo that references it:
+#
+#   jobs:
+#     check:
+#       uses: GreyAreaSystems/ci/.github/workflows/rust-check.yml@main
+#       with:
+#         exclude: "myco-desktop myco-ui"
+#
+# This repo is public because cross-organisation reuse requires it — private
+# reusable workflows are only callable within their own org, and these repos
+# span four accounts. Nothing secret lives here; it is workflow shape only.
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        description: "Runner to use (ubuntu-latest | windows-latest | a self-hosted label)."
+        type: string
+        default: ubuntu-latest
+      exclude:
+        description: >
+          Space-separated crate names to exclude from clippy/test — e.g. crates
+          that need a GPU stack or a platform toolchain CI does not have. fmt
+          always covers the whole workspace, since it needs no build.
+        type: string
+        default: ""
+      features:
+        description: "Extra cargo feature flags, e.g. '--all-features'."
+        type: string
+        default: ""
+      toolchain:
+        description: "Rust toolchain."
+        type: string
+        default: stable
+      package:
+        description: "Run `cargo package` too — for crates published to crates.io."
+        type: boolean
+        default: false
+      target-dir:
+        description: >
+          CARGO_TARGET_DIR override. Defaults to `target`, deliberately: a repo
+          whose .cargo/config.toml points target-dir outside the workspace would
+          otherwise defeat rust-cache and build cold on every run.
+        type: string
+        default: target
+      build-jobs:
+        description: >
+          CARGO_BUILD_JOBS. Defaults to 2 to match a standard runner — a repo
+          configured for a many-core dev box will thrash otherwise.
+        type: string
+        default: "2"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ${{ inputs.os }}
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_TARGET_DIR: ${{ inputs.target-dir }}
+      CARGO_BUILD_JOBS: ${{ inputs.build-jobs }}
+      # NOTE: no RUSTFLAGS here on purpose. As an env var it *replaces* any
+      # `target.<triple>.rustflags` in a repo's .cargo/config.toml rather than
+      # extending it, which silently drops things like link-arg=/STACK:… that a
+      # GPU or GUI link needs. clippy denies warnings via `-- -D warnings`.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ inputs.toolchain }}
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: fmt
+        run: cargo fmt --all --check
+
+      - name: clippy
+        shell: bash
+        run: |
+          EX=""
+          for c in ${{ inputs.exclude }}; do EX="$EX --exclude $c"; done
+          cargo clippy --workspace --all-targets $EX ${{ inputs.features }} -- -D warnings
+
+      - name: test
+        shell: bash
+        run: |
+          EX=""
+          for c in ${{ inputs.exclude }}; do EX="$EX --exclude $c"; done
+          cargo test --workspace $EX ${{ inputs.features }}
+
+      - name: package
+        if: inputs.package
+        run: cargo package --allow-dirty
